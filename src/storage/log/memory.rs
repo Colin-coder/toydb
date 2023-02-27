@@ -49,6 +49,7 @@ impl Store for Memory {
         self.committed
     }
 
+    /// index从1开始计数
     fn get(&self, index: u64) -> Result<Option<Vec<u8>>> {
         match index {
             0 => Ok(None),
@@ -64,12 +65,14 @@ impl Store for Memory {
         Box::new(
             self.log
                 .iter()
+                // 先确定末尾取多少元素
                 .take(match range.end {
                     Bound::Included(n) => n as usize,
                     Bound::Excluded(0) => 0,
                     Bound::Excluded(n) => n as usize - 1,
                     Bound::Unbounded => std::usize::MAX,
                 })
+                // 再把前面的跳过
                 .skip(match range.start {
                     Bound::Included(0) => 0,
                     Bound::Included(n) => n as usize - 1,

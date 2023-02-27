@@ -47,6 +47,8 @@ impl Server {
 
     /// Starts listening on the given ports. Must be called before serve.
     pub async fn listen(mut self, sql_addr: &str, raft_addr: &str) -> Result<Self> {
+
+        // try_join 尝试等待多个task完成，如果全部完成才返回，这两个task是并发执行的，没有先后顺序
         let (sql, raft) =
             tokio::try_join!(TcpListener::bind(sql_addr), TcpListener::bind(raft_addr),)?;
         info!("Listening on {} (SQL) and {} (Raft)", sql.local_addr()?, raft.local_addr()?);
@@ -66,8 +68,11 @@ impl Server {
         let (raft_tx, raft_rx) = mpsc::unbounded_channel();
         let sql_engine = sql::engine::Raft::new(raft::Client::new(raft_tx));
 
+        
         tokio::try_join!(
+            // 处理raft其他节点发过来的消息，并将消息发送到
             self.raft.serve(raft_listener, raft_rx),
+            // 处理客户端的sql请求，并将sql请求发送到sql_engine
             Self::serve_sql(sql_listener, sql_engine),
         )?;
         Ok(())

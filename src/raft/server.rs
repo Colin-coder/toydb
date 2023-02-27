@@ -17,6 +17,8 @@ const TICK: Duration = Duration::from_millis(100);
 
 /// A Raft server.
 pub struct Server {
+
+    // local Raft node
     node: Node,
     peers: HashMap<String, String>,
     node_rx: mpsc::UnboundedReceiver<Message>,
@@ -30,6 +32,7 @@ impl Server {
         log: Log,
         state: Box<dyn State>,
     ) -> Result<Self> {
+        // mpsc: multi-producer single-consumer
         let (node_tx, node_rx) = mpsc::unbounded_channel();
         Ok(Self {
             node: Node::new(
@@ -53,16 +56,26 @@ impl Server {
     ) -> Result<()> {
         let (tcp_in_tx, tcp_in_rx) = mpsc::unbounded_channel::<Message>();
         let (tcp_out_tx, tcp_out_rx) = mpsc::unbounded_channel::<Message>();
+
+        // 通过tcp接收其他raft节点发送过来的消息
         let (task, tcp_receiver) = Self::tcp_receive(listener, tcp_in_tx).remote_handle();
+        
+        // 将task放到任务队列中异步执行，不阻塞当前线程
         tokio::spawn(task);
+
+        // 建立专门发送tcp消息的task，异步执行
         let (task, tcp_sender) =
             Self::tcp_send(self.node.id(), self.peers, tcp_out_rx).remote_handle();
         tokio::spawn(task);
+
+
+        // 开启eventloop，轮询接收请求并执行相关逻辑，异步执行
         let (task, eventloop) =
             Self::eventloop(self.node, self.node_rx, client_rx, tcp_in_rx, tcp_out_tx)
                 .remote_handle();
         tokio::spawn(task);
 
+        // 等待三个异步操作结束
         tokio::try_join!(tcp_receiver, tcp_sender, eventloop)?;
         Ok(())
     }

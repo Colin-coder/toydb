@@ -91,6 +91,7 @@ impl RangeBounds<Vec<u8>> for Range {
 }
 
 /// Iterator over a key/value range.
+/// DoubleEndedIterator 可以同时从前后进行iterator遍历
 pub type Scan = Box<dyn DoubleEndedIterator<Item = Result<(Vec<u8>, Vec<u8>)>> + Send>;
 
 #[cfg(test)]

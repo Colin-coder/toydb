@@ -112,18 +112,26 @@ impl Transaction {
     fn begin(store: Arc<RwLock<Box<dyn Store>>>, mode: Mode) -> Result<Self> {
         let mut session = store.write()?;
 
+        // 从store里面获取TxnNext类型的value值
         let id = match session.get(&Key::TxnNext.encode())? {
             Some(ref v) => deserialize(v)?,
             None => 1,
         };
+
+        // store中设置下一个transaction的值 key=TxnNext, value=id + 1  (都是经过序列化的数据)
         session.set(&Key::TxnNext.encode(), serialize(&(id + 1))?)?;
+        // 设置当前Active的transaction的值  key=TxnActive(id), value=mode
         session.set(&Key::TxnActive(id).encode(), serialize(&mode)?)?;
 
         // We always take a new snapshot, even for snapshot transactions, because all transactions
         // increment the transaction ID and we need to properly record currently active transactions
         // for any future snapshot transactions looking at this one.
+        // 用当前要处理的transaction id作为 snapshot的version
         let mut snapshot = Snapshot::take(&mut session, id)?;
         std::mem::drop(session);
+
+        // 如果mode是Snapshot类型的，从store存储的数据中找到对应version的数据，使用原有数据生成snapshot
+        // 如果不是，则使用新建的snapshot
         if let Mode::Snapshot { version } = &mode {
             snapshot = Snapshot::restore(&store.read()?, *version)?
         }
@@ -157,6 +165,7 @@ impl Transaction {
     }
 
     /// Commits the transaction, by removing the txn from the active set.
+    /// 从 store中删除当前活跃id的数据  TxnActive(self.id)
     pub fn commit(self) -> Result<()> {
         let mut session = self.store.write()?;
         session.delete(&Key::TxnActive(self.id).encode())?;
@@ -168,12 +177,17 @@ impl Transaction {
         let mut session = self.store.write()?;
         if self.mode.mutable() {
             let mut rollback = Vec::new();
+
+            // 从store中遍历Key::TxnUpdate类型的数据，参数是id和vec![].into()
             let mut scan = session.scan(Range::from(
                 Key::TxnUpdate(self.id, vec![].into()).encode()
                     ..Key::TxnUpdate(self.id + 1, vec![].into()).encode(),
             ));
+
+            // 从store中获取key和value
             while let Some((key, _)) = scan.next().transpose()? {
                 match Key::decode(&key)? {
+                    // 从Key::TxnUpdate类型的key中解出数据vec updated_key
                     Key::TxnUpdate(_, updated_key) => rollback.push(updated_key.into_owned()),
                     k => return Err(Error::Internal(format!("Expected TxnUpdate, got {:?}", k))),
                 };
@@ -344,6 +358,8 @@ impl Snapshot {
     /// Takes a new snapshot, persisting it as `Key::TxnSnapshot(version)`.
     fn take(session: &mut RwLockWriteGuard<Box<dyn Store>>, version: u64) -> Result<Self> {
         let mut snapshot = Self { version, invisible: HashSet::new() };
+
+        // 遍历version之前的 所有活跃的transaction，保存到 invisible 数组中
         let mut scan =
             session.scan(Range::from(Key::TxnActive(0).encode()..Key::TxnActive(version).encode()));
         while let Some((key, _)) = scan.next().transpose()? {
@@ -353,6 +369,8 @@ impl Snapshot {
             };
         }
         std::mem::drop(scan);
+
+        // 在store中保存TxnSnapshot(version)，invisible
         session.set(&Key::TxnSnapshot(version).encode(), serialize(&snapshot.invisible)?)?;
         Ok(snapshot)
     }

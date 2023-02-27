@@ -14,9 +14,11 @@ use toydb::storage;
 use toydb::Server;
 
 #[tokio::main]
+// tokio: rust的异步运行时，大致是通过event-driven框架实现
 async fn main() -> Result<()> {
     let opts = app_from_crate!()
         .arg(
+            // clap: Rust 命令行解析库
             clap::Arg::with_name("config")
                 .short("c")
                 .long("config")
@@ -25,16 +27,21 @@ async fn main() -> Result<()> {
                 .default_value("/etc/toydb.yaml"),
         )
         .get_matches();
+    // unwrap() 解析Option<T>类型，如果是Some(T)，返回T；如果是None，直接panic
     let cfg = Config::new(opts.value_of("config").unwrap())?;
 
+    // 由于 LevelFilter 实现了 FromStr，所以可以用parse去转换
     let loglevel = cfg.log_level.parse::<simplelog::LevelFilter>()?;
     let mut logconfig = simplelog::ConfigBuilder::new();
     if loglevel != simplelog::LevelFilter::Debug {
+        // 设置日志中只能打印的日志属于哪个模块，现在只有toydb模块的日志能够打印
         logconfig.add_filter_allow_str("toydb");
     }
     simplelog::SimpleLogger::init(loglevel, logconfig.build())?;
 
     let path = std::path::Path::new(&cfg.data_dir);
+
+    // 这里 Hybrid和Memory 都impl了Store，所以可以理解为面向对象的多态
     let raft_store: Box<dyn storage::log::Store> = match cfg.storage_raft.as_str() {
         "hybrid" | "" => Box::new(storage::log::Hybrid::new(path, cfg.sync)?),
         "memory" => Box::new(storage::log::Memory::new()),
@@ -46,6 +53,8 @@ async fn main() -> Result<()> {
         name => return Err(Error::Config(format!("Unknown SQL storage engine {}", name))),
     };
 
+    // await会将当前任务放入事件循环中等待处理，会阻塞当前执行，如果执行完才继续往下走，但是允许其他task继续执行
+    // async函数，实际返回结果都是加上 Future 类型的
     Server::new(&cfg.id, cfg.peers, raft_store, sql_store)
         .await?
         .listen(&cfg.listen_sql, &cfg.listen_raft)
@@ -82,6 +91,9 @@ impl Config {
 
         c.merge(config::File::with_name(file))?;
         c.merge(config::Environment::with_prefix("TOYDB"))?;
+
+        // try_into 用于将某种类型转换成另一种类型，可能会出错，返回结果是Result类型
+        // ?表达式：对于Result类型，如果是Ok(T)，则返回T；如果是Err(e)，则 return Err(e)
         Ok(c.try_into()?)
     }
 }
